@@ -3,23 +3,27 @@ import asyncio
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from telethon import TelegramClient
+from telethon.sessions import StringSession
 
-# Данные для бота-управления (аккаунт 1)
-BOT_TOKEN = os.getenv("7973570914:AAGi4XfqgpTuQM3fUpGvkG-BgyiGWfmVS6I")  # Токен от @BotFather
-ADMIN_ID = 5015543786  # Ваш ID в Telegram
-
-# Данные для аккаунта рассылки (аккаунт 2)
-API_ID = os.getenv("11423218)  # Ваш api_id
-API_HASH = os.getenv("1f7f272aaf03ff0caf14feec06848321")  # Ваш api_hash
-PHONE = "+56978389470"  # Номер аккаунта рассылки
+# Конфигурация
+BOT_TOKEN = os.getenv("BOT_TOKEN")         # Токен бота-управления (@BotFather)
+ADMIN_ID = int(os.getenv("ADMIN_ID"))      # Ваш ID в Telegram
+API_ID = int(os.getenv("API_ID"))          # Ваш api_id (my.telegram.org)
+API_HASH = os.getenv("API_HASH")           # Ваш api_hash
+SESSION_STRING = os.getenv("SESSION_STRING")  # Сессия Telethon в виде строки
 
 # Глобальные переменные
 waiting_for_message = False
 mailing_text = ""
 
-# Функции для бота-управления
+# Бот-управление
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📢 Бот для управления рассылкой. Команды:\n/mailing - задать текст\n/send - начать")
+    await update.message.reply_text(
+        "📢 Бот для рассылки\n"
+        "Команды:\n"
+        "/mailing - задать текст\n"
+        "/send - начать рассылку"
+    )
 
 async def ask_mailing_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global waiting_for_message
@@ -36,7 +40,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         waiting_for_message = False
         await update.message.reply_text(f"✅ Текст сохранён. Отправьте /send")
 
-# Функция рассылки через Telethon (аккаунт 2)
+# Рассылка через Telethon
 async def send_mailing(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ Нет прав!")
@@ -48,10 +52,14 @@ async def send_mailing(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         # Подключаемся к аккаунту рассылки
-        client = TelegramClient("sender", API_ID, API_HASH)
-        await client.start(PHONE)
+        client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+        await client.connect()
 
-        # Читаем chat_id из groups.txt
+        if not await client.is_user_authorized():
+            await update.message.reply_text("❌ Ошибка авторизации!")
+            return
+
+        # Чтение chat_id из groups.txt
         with open("groups.txt", "r") as file:
             chat_ids = [line.strip() for line in file if line.strip()]
 
@@ -61,7 +69,7 @@ async def send_mailing(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 await client.send_message(int(chat_id), mailing_text)
                 success += 1
-                await asyncio.sleep(2)  # Задержка
+                await asyncio.sleep(2)  # Задержка для избежания флуда
             except Exception as e:
                 print(f"Ошибка в чате {chat_id}: {e}")
 
@@ -69,7 +77,7 @@ async def send_mailing(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await client.disconnect()
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
 if __name__ == "__main__":
     # Бот-управление
