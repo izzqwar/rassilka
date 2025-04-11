@@ -1,0 +1,37 @@
+name: Run Telegram Bot
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:  # Для ручного запуска
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          
+      - name: Create required folders
+        run: |
+          mkdir -p sessions
+          touch groups.txt
+          
+      - name: Run Bot
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ADMIN_ID: ${{ secrets.ADMIN_ID }}
+          API_ID: ${{ secrets.API_ID }}
+          API_HASH: ${{ secrets.API_HASH }}
+        run: |
+          nohup python bot.py > bot.log 2>&1 &
+          sleep 300  # Ожидание авторизации
+          tail -n 50 bot.log  # Показ логов
