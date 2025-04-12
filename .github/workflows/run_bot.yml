@@ -3,7 +3,9 @@ name: Run Telegram Bot
 on:
   push:
     branches: [ "main" ]
-  workflow_dispatch:  # Для ручного запуска
+  workflow_dispatch:
+  schedule:
+    - cron: '*/5 * * * *'  # Пинг каждые 5 минут
 
 jobs:
   run-bot:
@@ -19,11 +21,15 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
+          pip install requests
           
-      - name: Create required folders
+      - name: Prepare session file
         run: |
-          mkdir -p sessions
-          touch groups.txt
+          if [ -f "session.session" ]; then
+            echo "Session file exists"
+          else
+            touch session.session
+          fi
           
       - name: Run Bot
         env:
@@ -31,7 +37,15 @@ jobs:
           ADMIN_ID: ${{ secrets.ADMIN_ID }}
           API_ID: ${{ secrets.API_ID }}
           API_HASH: ${{ secrets.API_HASH }}
+          SESSION_STRING: ${{ secrets.SESSION_STRING }}
+          PING_URL: "https://api.uptimerobot.com/v2/getMonitors?api_key=${{ secrets.UPTIME_ROBOT_KEY }}"
         run: |
+          # Запуск бота в фоне с пингом
           nohup python bot.py > bot.log 2>&1 &
-          sleep 300  # Ожидание авторизации
-          tail -n 50 bot.log  # Показ логов
+          sleep 30
+          
+          # Бесконечный пинг
+          while true; do
+            curl -s "$PING_URL" > /dev/null
+            sleep 300
+          done
