@@ -5,117 +5,102 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 
-# Конфигурация (из секретов GitHub)
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
+# Конфигурация
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
+SESSION_STRING = os.getenv("SESSION_STRING")  # Для инициализации сессии
+PING_URL = os.getenv("PING_URL", "")
 
-# Создаем папку для сессии
-os.makedirs("sessions", exist_ok=True)
+# Инициализация клиента Telethon
+client = TelegramClient(
+    StringSession(SESSION_STRING) if SESSION_STRING else "session",
+    int(os.getenv("API_ID")),
+    os.getenv("API_HASH")
+)
 
-# Состояния пользователей
-user_states = {}
+async def ping_server():
+    """Пинг для поддержания активности"""
+    if PING_URL:
+        import requests
+        try: requests.get(PING_URL)
+        except: pass
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "🤖 *Бот для рассылки*\n"
-        "🔹 /auth - Авторизовать аккаунт для рассылки\n"
-        "🔹 /mailing - Начать рассылку\n\n"
-        "ℹ️ ID чатов берутся из файла `groups.txt`"
+    """Обработчик команды /start"""
+    chat_count = len(load_chats())
+    await update.message.reply_text(
+        f"🤖 Бот готов к работе\n"
+        f"📊 Чатов в базе: {chat_count}\n"
+        f"🔹 /mailing - Начать рассылку",
+        parse_mode="Markdown"
     )
-    await update.message.reply_text(text, parse_mode="Markdown")
 
-async def auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def load_chats():
+    """Загрузка ID чатов из файла"""
+    try:
+        with open("groups.txt", "r") as f:
+            return [line.strip() for line in f if line.strip()]
+    except FileNotFoundError:
+        return []
+
+async def mailing(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик рассылки"""
     if update.effective_user.id != ADMIN_ID:
         return
     
-    user_states[update.effective_user.id] = {"step": "waiting_phone"}
-    await update.message.reply_text("📱 Отправьте номер телефона в формате +79991234567:")
+    await update.message.reply_text("📝 Введите текст рассылки:")
+    context.user_data["state"] = "awaiting_mailing_text"
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
+    """Обработка текстовых сообщений"""
+    if update.effective_user.id != ADMIN_ID:
         return
 
-    state = user_states.get(user_id, {})
-
-    # Обработка авторизации
-    if state.get("step") == "waiting_phone":
-        user_states[user_id] = {
-            "step": "waiting_code",
-            "phone": update.message.text
-        }
-        await update.message.reply_text("🔢 Отправьте код из SMS:")
-    
-    elif state.get("step") == "waiting_code":
+    if context.user_data.get("state") == "awaiting_mailing_text":
         try:
-            client = TelegramClient(StringSession(), API_ID, API_HASH)
-            await client.start(
-                phone=user_states[user_id]["phone"],
-                code=lambda: update.message.text
-            )
-            
-            with open("sessions/session.txt", "w") as f:
-                f.write(client.session.save())
-            
-            await update.message.reply_text("✅ Авторизация успешна!")
-            user_states.pop(user_id)
-        except Exception as e:
-            await update.message.reply_text(f"❌ Ошибка: {str(e)}")
-    
-    # Обработка рассылки
-    elif state.get("step") == "waiting_mailing_text":
-        try:
-            # Читаем ID чатов из файла
-            with open("groups.txt", "r") as f:
-                chat_ids = [line.strip() for line in f if line.strip()]
-            
+            chat_ids = load_chats()
             if not chat_ids:
                 await update.message.reply_text("⚠️ Файл groups.txt пуст")
                 return
-            
-            # Подключаемся через сохраненную сессию
-            with open("sessions/session.txt", "r") as f:
-                session_str = f.read().strip()
-            
-            async with TelegramClient(StringSession(session_str), API_ID, API_HASH) as client:
+
+            async with client:
                 success = 0
                 for chat_id in chat_ids:
                     try:
                         await client.send_message(int(chat_id), update.message.text)
                         success += 1
-                        await asyncio.sleep(2)  # Задержка против флуда
+                        await asyncio.sleep(2)
                     except Exception as e:
                         print(f"Ошибка в чате {chat_id}: {e}")
-                
+
                 await update.message.reply_text(
                     f"📊 Результат:\n"
-                    f"• Успешно: {success}/{len(chat_ids)}\n"
-                    f"• Текст: `{update.message.text}`",
+                    f"• Успешно: {success}/{len(chat_ids)}",
                     parse_mode="Markdown"
                 )
-        
+                await ping_server()
+
         except Exception as e:
             await update.message.reply_text(f"❌ Ошибка: {str(e)}")
         
-        user_states.pop(user_id)
+        context.user_data.pop("state", None)
 
-async def mailing(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    
-    if not os.path.exists("sessions/session.txt"):
-        await update.message.reply_text("⚠️ Сначала выполните /auth")
-        return
-    
-    user_states[update.effective_user.id] = {"step": "waiting_mailing_text"}
-    await update.message.reply_text("📝 Введите текст рассылки:")
+async def connect_client():
+    """Подключение клиента Telethon"""
+    if not await client.is_user_authorized():
+        if SESSION_STRING:
+            await client.start()
+        else:
+            raise Exception("Требуется файл сессии или SESSION_STRING")
 
 if __name__ == "__main__":
+    # Инициализация бота
     app = Application.builder().token(BOT_TOKEN).build()
+    
+    # Регистрация обработчиков
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("auth", auth))
     app.add_handler(CommandHandler("mailing", mailing))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Запуск
     app.run_polling()
